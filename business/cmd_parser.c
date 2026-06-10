@@ -85,6 +85,10 @@ cmd_t parse_cmd(const char *buf)
         return CMD_GET_CLIENT;
     } else if (strcmp(cmd_buf, "RELOAD CONFIG") == 0) {
         return CMD_RELOAD_CONFIG;
+    } else if (strcmp(cmd_buf, "OLED HELP") == 0) {
+        return CMD_OLED_HELP;
+    } else if (strcmp(cmd_buf, "OLED MAIN") == 0) {
+        return CMD_OLED_MAIN;
     }
 
     return CMD_UNKNOWN;

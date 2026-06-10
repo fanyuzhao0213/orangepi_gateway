@@ -30,7 +30,8 @@
 #include "tcp_server.h"
 #include "client_manager.h"
 #include "message_queue.h"
-
+#include "hal_oled.h"
+#include "oled_display.h"
 /* ============================================================
  * 编译时间定义
  * ============================================================ */
@@ -315,24 +316,26 @@ static void print_system_status(void)
  *       4. 设备状态
  *       5. 消息队列
  *       6. 客户端管理
+ *       7. OLED显示
  */
 static int system_init(void)
 {
-    // 1. 初始化 HAL
+    // 1. 初始化 HAL LED
     if (hal_led_init(0) < 0) {
         fprintf(stderr, "HAL LED 初始化失败\n");
         return -1;
     }
+    log_info("HAL LED 初始化完成");
 
-    // 2. 加载配置（使用当前目录）
-    config_load("./gate_orangepi.conf");
-    log_info("配置加载完成");
-
-    // 3. 初始化日志（使用配置文件中的日志路径）
+    // 2. 初始化日志
     const char *log_file = config_get("log_file", "./gate_orangepi.log");
     log_init(log_file);
     log_info("Gate_orangepi 服务启动");
     log_info("编译时间: %s", COMPILE_TIME);
+
+    // 3. 加载配置（使用当前目录）
+    config_load("./gate_orangepi.conf");
+    log_info("配置加载完成");
 
     // 4. 初始化设备状态
     device_status_init();
@@ -351,6 +354,19 @@ static int system_init(void)
         return -1;
     }
     log_info("客户端管理器初始化完成");
+
+    // 7. 初始化OLED显示模块 (使用I2C2总线)
+    if (oled_display_init(2, 0x3C) < 0) {
+        log_error("OLED初始化失败");
+        return -1;
+    }
+    log_info("OLED初始化完成");
+
+    // 8. 异步显示开机欢迎界面
+    if (oled_display_welcome_async(OLED_DISPLAY_VERSION) < 0) {
+        log_warn("OLED欢迎界面异步显示启动失败");
+    }
+    log_info("OLED欢迎界面正在显示...");
 
     return 0;
 }
@@ -485,6 +501,18 @@ int main(int argc, char *argv[])
     while (g_running) {
         // 打印系统状态
         print_system_status();
+
+        // 获取设备状态用于OLED显示
+        device_status_t status;
+        device_status_get_all(&status);
+
+        // 更新OLED显示（欢迎界面显示期间跳过主界面更新）
+        if (!oled_display_is_welcome_running()) {
+            oled_display_main(ip_address, server_port,
+                             status.client_count,
+                             status.temperature,
+                             status.led_status);
+        }
 
         // 使用配置的间隔时间
         sleep(status_interval);

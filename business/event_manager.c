@@ -2,6 +2,7 @@
 #include <string.h>
 #include "event_manager.h"
 #include "../hal/hal_led.h"
+#include "../hal/oled_display.h"
 #include "../service/device_service.h"
 #include "../service/config_service.h"
 #include "../service/log_service.h"
@@ -130,6 +131,48 @@ static int handle_reload_config(char *response, int response_size)
 }
 
 /**
+ * @brief 处理 OLED HELP 命令
+ * @param response 输出响应缓冲区
+ * @param response_size 响应缓冲区大小
+ * @return 0: 成功, -1: 失败
+ */
+static int handle_oled_help(char *response, int response_size)
+{
+    // 显示命令帮助界面
+    oled_display_help();
+
+    // 记录日志
+    log_info("CMD: OLED HELP - 显示命令帮助");
+
+    // 返回响应
+    snprintf(response, response_size, "OLED HELP\r\n");
+    return 0;
+}
+
+/**
+ * @brief 处理 OLED MAIN 命令
+ * @param response 输出响应缓冲区
+ * @param response_size 响应缓冲区大小
+ * @return 0: 成功, -1: 失败
+ */
+static int handle_oled_main(char *response, int response_size)
+{
+    // 获取设备状态
+    device_status_t status;
+    device_status_get_all(&status);
+
+    // 显示主界面（需要IP和端口信息，这里简化处理）
+    oled_display_message("提示", "返回主界面", 1);
+
+    // 记录日志
+    log_info("CMD: OLED MAIN - 返回主界面");
+
+    // 返回响应
+    snprintf(response, response_size, "OLED MAIN\r\n");
+    return 0;
+}
+
+/**
  * @brief 处理未知命令
  * @param response 输出响应缓冲区
  * @param response_size 响应缓冲区大小
@@ -171,6 +214,10 @@ int event_process(cmd_t cmd, char *response, int response_size)
             return handle_get_client(response, response_size);
         case CMD_RELOAD_CONFIG:
             return handle_reload_config(response, response_size);
+        case CMD_OLED_HELP:
+            return handle_oled_help(response, response_size);
+        case CMD_OLED_MAIN:
+            return handle_oled_main(response, response_size);
         case CMD_UNKNOWN:
         default:
             return handle_unknown(response, response_size);

@@ -11,7 +11,7 @@ CROSS_COMPILE = aarch64-none-linux-gnu-
 CC = $(CROSS_COMPILE)gcc
 AR = $(CROSS_COMPILE)ar
 CFLAGS = -Wall -O2 -I./app -I./hal -I./service -I./business -I./network
-LDFLAGS =
+LDFLAGS = -lm
 
 # ============================================================
 # 项目目录结构

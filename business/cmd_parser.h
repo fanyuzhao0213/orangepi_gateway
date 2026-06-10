@@ -11,6 +11,8 @@ typedef enum {
     CMD_GET_TEMP,        // GET TEMP
     CMD_GET_CLIENT,      // GET CLIENT
     CMD_RELOAD_CONFIG,   // RELOAD CONFIG
+    CMD_OLED_HELP,       // OLED HELP
+    CMD_OLED_MAIN,       // OLED MAIN
     CMD_UNKNOWN          // 未知命令
 } cmd_t;
 
