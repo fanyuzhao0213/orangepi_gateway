@@ -15,6 +15,7 @@
 | OLED 显示 | 显示系统状态、欢迎界面、命令帮助等 |
 | 日志系统 | 记录系统运行日志 |
 | 配置管理 | 加载和管理配置文件 |
+| 🆕 Web 管理界面 | 通过浏览器查看状态、控制 LED、修改配置、发送命令 |
 
 ---
 
@@ -49,6 +50,9 @@
 │  │ log_service  │    │ config_svc   │    │ device_svc   │  │
 │  │ 日志服务     │    │ 配置服务     │    │ 设备状态服务 │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
+│  ┌──────────────┐                                         │
+│  │ web_service  │  🆕 Web 管理服务 (HTTP 服务器)          │
+│  └──────────────┘                                         │
 ├─────────────────────────────────────────────────────────────┤
 │                    HAL Layer (硬件抽象层)                    │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
@@ -74,7 +78,8 @@ orangepiZero2w/
 ├── service/                # 服务层
 │   ├── log_service.c/h     # 日志服务
 │   ├── config_service.c/h  # 配置服务
-│   └── device_service.c/h  # 设备状态服务
+│   ├── device_service.c/h  # 设备状态服务
+│   └── web_service.c/h     # 🆕 Web 管理服务 (HTTP 服务器)
 ├── hal/                    # 硬件抽象层
 │   ├── hal_oled.c/h        # OLED驱动
 │   ├── hal_oled_data.c/h   # OLED字模数据
@@ -106,6 +111,7 @@ orangepiZero2w/
 | 网络线程 | TCP服务器运行、客户端连接处理 | 高 |
 | 业务线程 | 消息队列消费、命令处理 | 中 |
 | 日志线程 | 异步日志写入（预留） | 低 |
+| Web 服务线程 | 嵌入式 HTTP 服务器,提供 Web 管理界面 | 中 |
 | 欢迎界面线程 | OLED欢迎界面异步显示 | 低 |
 
 ---
@@ -221,7 +227,8 @@ typedef struct {
 |-------|-------|------|
 | `server_port` | `8888` | TCP服务器监听端口 |
 | `log_file` | `./gate_orangepi.log` | 日志文件路径 |
-| `status_interval` | `10` | 状态更新间隔（秒） |
+| `status_interval` | `10` | 状态更新间隔(秒) |
+| `web_port` | `8080` | 🆕 Web 管理界面监听端口 |
 
 **API**:
 - `config_load()` - 加载配置文件
@@ -244,6 +251,44 @@ typedef struct {
 ```
 
 **特性**: 使用互斥锁保证线程安全
+
+#### 3.4.4 Web 管理服务 (web_service) 🆕
+
+**文件**: `service/web_service.c/h`
+
+**功能**: 提供嵌入式 HTTP 服务器与 Web 管理界面
+
+**特性**:
+- 自实现 HTTP/1.0 服务器(无第三方依赖)
+- epoll 单线程多路复用
+- HTML/CSS/JS 页面直接内嵌到二进制(`const char` 数组)
+- RESTful API 接口
+- 监听独立端口(默认 8080),与 TCP 业务端口(8888)互不干扰
+
+**API 端点**:
+
+| Method | URI | 功能 |
+|--------|-----|------|
+| `GET`  | `/` | 返回主管理页面 |
+| `GET`  | `/api/status` | 获取设备状态(JSON) |
+| `POST` | `/api/led` | 设置 LED 开关 (`{"on":1}`) |
+| `POST` | `/api/led/toggle` | 切换 LED 状态 |
+| `GET`  | `/api/config` | 读取当前配置 |
+| `POST` | `/api/config` | 修改并保存配置 |
+| `POST` | `/api/command` | 透传业务命令 (`{"cmd":"LED ON"}`) |
+
+**页面功能**:
+- 实时显示 LED 状态、客户端数、温度、时间(2秒自动刷新)
+- LED 开关/切换按钮
+- 配置项在线编辑(服务器端口、刷新间隔、日志路径、Web 端口)
+- 命令控制台(透传到 `event_manager` 处理)
+
+**配置项**:
+- `web_port` - Web 服务监听端口(默认 `8080`)
+
+**API**:
+- `web_service_start(port)` - 启动 HTTP 服务器(阻塞)
+- `web_service_is_running()` - 查询运行状态
 
 ---
 
@@ -369,7 +414,8 @@ main()
   │
   ├─→ pthread_create(network_thread)   // 创建网络线程
   ├─→ pthread_create(business_thread)  // 创建业务线程
-  └─→ pthread_create(log_thread)       // 创建日志线程
+  ├─→ pthread_create(log_thread)       // 创建日志线程
+  └─→ pthread_create(web_thread)       // 🆕 创建 Web 服务线程
 ```
 
 ### 4.3 主循环流程
@@ -443,6 +489,8 @@ gcc -o gate_orangepi \
 ./gate_orangepi -d
 ```
 
+启动后可访问 Web 管理界面: `http://<OrangePi_IP>:8080`
+
 ### 7.3 配置文件
 
 ```ini
@@ -450,6 +498,7 @@ gcc -o gate_orangepi \
 server_port=8888
 log_file=./gate_orangepi.log
 status_interval=10
+web_port=8080
 ```
 
 ---

@@ -186,9 +186,8 @@ void oled_display_help(void)
     }
 
     // 底部页码
-    char page_str[8];
-    snprintf(page_str, sizeof(page_str), "页%d/2", page + 1);
-    hal_oled_show_string(100, 56, page_str, OLED_6X8);
+    static const char *page_texts[] = {"页1/2", "页2/2"};
+    hal_oled_show_string(100, 0, page_texts[page], OLED_6X8);
 
     hal_oled_update();
 

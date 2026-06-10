@@ -32,6 +32,7 @@
 #include "message_queue.h"
 #include "hal_oled.h"
 #include "oled_display.h"
+#include "web_service.h"
 /* ============================================================
  * 编译时间定义
  * ============================================================ */
@@ -46,6 +47,7 @@ static volatile int g_running = 1;          /**< 运行标志 */
 static pthread_t g_network_thread;          /**< 网络线程 */
 static pthread_t g_business_thread;         /**< 业务线程 */
 static pthread_t g_log_thread;              /**< 日志线程 */
+static pthread_t g_web_thread;              /**< Web 服务线程 */
 
 /* ============================================================
  * 守护进程相关
@@ -271,6 +273,32 @@ static void* log_thread_func(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Web 服务线程
+ * @param arg 参数
+ * @return NULL
+ *
+ * @note 负责嵌入式 HTTP 服务器
+ *       监听独立端口(默认 8080),提供 Web 管理界面与 REST API
+ *       与 TCP 业务端口(默认 8888)并存,互不干扰
+ */
+static void* web_thread_func(void *arg)
+{
+    log_info("Web 服务线程启动");
+
+    // 读取配置的 Web 端口
+    int web_port = atoi(config_get("web_port", "8080"));
+
+    // 启动 HTTP 服务器
+    if (web_service_start(web_port) < 0) {
+        log_error("Web 服务启动失败");
+        return NULL;
+    }
+
+    log_info("Web 服务线程退出");
+    return NULL;
+}
+
 /* ============================================================
  * 系统状态打印
  * ============================================================ */
@@ -367,6 +395,10 @@ static int system_init(void)
         log_warn("OLED欢迎界面异步显示启动失败");
     }
     log_info("OLED欢迎界面正在显示...");
+
+    // 9. 读取 Web 服务端口(配置中无值时使用默认 8080)
+    int web_port = atoi(config_get("web_port", "8080"));
+    log_info("Web 服务端口: %d", web_port);
 
     return 0;
 }
@@ -467,8 +499,16 @@ int main(int argc, char *argv[])
     }
     log_info("日志线程已创建");
 
+    // 创建 Web 服务线程
+    if (pthread_create(&g_web_thread, NULL, web_thread_func, NULL) != 0) {
+        log_error("Web 服务线程创建失败");
+        return 1;
+    }
+    log_info("Web 服务线程已创建");
+
     // 读取配置参数
     int server_port = atoi(config_get("server_port", "8888"));
+    int web_port = atoi(config_get("web_port", "8080"));
     int status_interval = atoi(config_get("status_interval", "10"));
 
     // 获取本机IP地址（遍历网络接口）
@@ -483,18 +523,20 @@ int main(int argc, char *argv[])
     }
 
     log_info("Gate_orangepi 服务已启动");
-    log_info("服务器地址: %s:%d", ip_address, server_port);
+    log_info("TCP 服务器地址: %s:%d", ip_address, server_port);
+    log_info("Web 管理地址:   http://%s:%d", ip_address, web_port);
     log_info("编译时间: %s", COMPILE_TIME);
 
     // 打印客户端使用说明
     log_info("========================================");
-    log_info("客户端命令说明:");
+    log_info("TCP 客户端命令说明:");
     log_info("  LED ON          - 打开LED灯");
     log_info("  LED OFF         - 关闭LED灯");
     log_info("  GET STATUS      - 获取系统状态");
     log_info("  GET TEMP        - 获取温度");
     log_info("  GET CLIENT      - 获取客户端数量");
     log_info("  RELOAD CONFIG   - 重新加载配置");
+    log_info("Web 管理界面:    http://%s:%d", ip_address, web_port);
     log_info("========================================");
 
     // 主循环
@@ -524,6 +566,10 @@ int main(int argc, char *argv[])
     log_info("停止消息队列...");
     mq_stop();
 
+    // 停止 Web 服务
+    log_info("停止 Web 服务...");
+    web_service_stop();
+
     // 等待线程结束
     log_info("等待网络线程退出...");
     pthread_join(g_network_thread, NULL);
@@ -536,6 +582,10 @@ int main(int argc, char *argv[])
     log_info("等待日志线程退出...");
     pthread_join(g_log_thread, NULL);
     log_info("日志线程已退出");
+
+    log_info("等待 Web 服务线程退出...");
+    pthread_join(g_web_thread, NULL);
+    log_info("Web 服务线程已退出");
 
     log_info("所有线程已退出");
 
