@@ -1,0 +1,1 @@
+cmd_/home/fyz/fyz_linux_project/driver/input_driver/Module.symvers :=  sed 's/ko$$/o/'  /home/fyz/fyz_linux_project/driver/input_driver/modules.order | scripts/mod/modpost      -o /home/fyz/fyz_linux_project/driver/input_driver/Module.symvers -e -i Module.symvers -T - 

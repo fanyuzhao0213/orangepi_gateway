@@ -1,0 +1,33 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "allwinner,sun50i-h618";
+
+    fragment@0 {
+        target-path = "/soc/lradc@5070800";
+        __overlay__ {
+      	    /* 改掉 compatible，让系统内置驱动匹配不到这个设备 */ 
+            compatible = "fyz,fyz-lradc-keys";
+            button-500 {
+                status = "disabled";
+            };
+            button-800 {
+                status = "disabled";
+            };
+
+            button-key1 {
+                linux,code = <3>;
+                channel = <0>;
+                voltage = <1153125>;   /* 实测 1.15V */
+            };
+            button-key2 {
+                linux,code = <29>;
+                channel = <0>;
+                voltage = <759375>;    /* 实测 0.76V */
+            };
+        };
+    };
+};
+
+

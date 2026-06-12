@@ -1,0 +1,32 @@
+/dts-v1/;                    // 声明设备树版本为 v1
+/plugin/;                    // 声明这是一个 overlay（覆盖）文件
+
+/ {
+    compatible = "allwinner,sun50i-h618";  // 兼容于 H618 芯片
+
+    // 第一个 fragment：禁用系统原有的 LED 节点
+    fragment@0 {
+        target-path = "/leds";        // 目标路径：系统原有的 /leds 节点
+        __overlay__ {
+            status = "disabled";      // 将其状态设为 disabled，即禁用
+        };
+    };
+
+    // 第二个 fragment：在根节点下创建新的 platform 设备
+    fragment@1 {
+        target-path = "/";            // 目标路径：根节点
+        __overlay__ {
+            // 在根节点下创建 fyz_led 节点
+            // 因为根节点是 simple-bus，所以这个节点会自动成为 platform 设备
+            fyz_led {
+                compatible = "fyz-leds";      // 匹配你的 fyz-leds 驱动
+                label = "my_led";            // 设备标签，会在 sysfs 中显示
+                gpios = <&pio 2 13 0>;        // GPIO 配置：PC13，高电平有效
+                default-state = "off";        // 默认状态：关闭
+                linux,default-trigger = "none";  // 默认触发模式：无
+            };
+        };
+    };
+};
+
+

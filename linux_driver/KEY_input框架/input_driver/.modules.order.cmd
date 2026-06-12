@@ -1,0 +1,1 @@
+cmd_/home/fyz/fyz_linux_project/driver/input_driver/modules.order := {   echo /home/fyz/fyz_linux_project/driver/input_driver/fyz_key.ko; :; } > /home/fyz/fyz_linux_project/driver/input_driver/modules.order

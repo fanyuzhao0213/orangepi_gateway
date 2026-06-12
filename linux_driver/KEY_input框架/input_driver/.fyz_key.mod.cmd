@@ -1,0 +1,1 @@
+cmd_/home/fyz/fyz_linux_project/driver/input_driver/fyz_key.mod := printf '%s\n'   fyz_key.o | awk '!x[$$0]++ { print("/home/fyz/fyz_linux_project/driver/input_driver/"$$0) }' > /home/fyz/fyz_linux_project/driver/input_driver/fyz_key.mod
