@@ -1,0 +1,65 @@
+[Unit]
+Description=Gate_orangepi Gateway Service
+Documentation=https://github.com/your-org/gate-orangepi
+# 在网络就绪后启动(Web/TCP 服务需要网络)
+After=network-online.target
+Wants=network-online.target
+
+# 重启频率限制: 60 秒内最多重启 3 次,防止崩溃循环
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+# ============== 进程类型 ==============
+# simple: 主进程就是 ExecStart 启动的进程,不会 fork
+#         (与本程序的 -d daemon 模式互斥 —— 程序内部已处理,见 main.c)
+Type=simple
+
+# ============== 运行身份 ==============
+# 推荐: 用非 root 用户运行(orange pi 默认 orangepi 用户)
+# 若需要 GPIO/I2C 权限,见 docs/SERVICE.md 的"权限配置"章节
+User=orangepi
+Group=orangepi
+
+# ============== 工作目录与启动命令 ==============
+# 工作目录设为可执行文件所在目录
+# 启动时不再加 -d 参数:程序会通过 PPID==1 检测自动跳过 double-fork
+WorkingDirectory=/home/orangepi/fyz_test
+ExecStart=/home/orangepi/fyz_test/Gate_orangepi
+
+# ============== 环境变量 ==============
+# systemd 默认 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# 多数嵌入式工具 (ifconfig, gpio, etc.) 都在 /sbin,这里补全
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ============== 重启策略 ==============
+# always: 任何原因退出都重启(包括主动 stop 之后又被启动的情况)
+# on-failure: 仅在异常退出时重启
+Restart=always
+RestartSec=5
+
+# ============== 文件描述符 ==============
+# 守护进程/服务通常不需要 stdin
+StandardInput=null
+# 日志输出到 systemd-journal(用 journalctl 查看)
+StandardOutput=journal
+StandardError=journal
+# 日志级别: emerg/alert/crit/err/warning/notice/info/debug
+SyslogLevel=info
+
+# ============== 资源限制(防止内存泄漏拖垮系统) ==============
+MemoryMax=128M
+TasksMax=64
+
+# ============== 安全加固(可选,按需开启) ==============
+# 嵌入式程序通常需要写文件,所以先不启用严格保护
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=true
+# ReadWritePaths=/home/orangepi/fyz_test
+
+[Install]
+# 多用户模式启动(标准运行级别)
+WantedBy=multi-user.target
+
+

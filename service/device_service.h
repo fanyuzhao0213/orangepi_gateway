@@ -2,11 +2,13 @@
 #define DEVICE_SERVICE_H
 
 #include <pthread.h>
+#include "../hal/hal_led.h"
 
 typedef struct {
-    int led_status;       // 0: off, 1: on
-    int client_count;     // 当前客户端数量
-    int temperature;      // 温度 (摄氏度 * 10)
+    int led_status;           /* LED状态: 0=关闭, 1=打开 */
+    int client_count;         /* 当前客户端数量 */
+    int temperature;          /* 温度 (摄氏度 * 10) */
+    led_trigger_mode_t led_trigger;  /* LED触发模式 */
 } device_status_t;
 
 extern device_status_t g_device_status;
@@ -28,6 +30,18 @@ void device_status_set_led(int on);
  * @return 0: 关闭, 1: 打开
  */
 int device_status_get_led(void);
+
+/**
+ * @brief 设置 LED 触发模式
+ * @param mode 触发模式
+ */
+void device_status_set_led_trigger(led_trigger_mode_t mode);
+
+/**
+ * @brief 获取 LED 触发模式
+ * @return 触发模式
+ */
+led_trigger_mode_t device_status_get_led_trigger(void);
 
 /**
  * @brief 设置客户端数量
@@ -60,5 +74,3 @@ int device_status_get_temperature(void);
 void device_status_get_all(device_status_t *status);
 
 #endif
-
-

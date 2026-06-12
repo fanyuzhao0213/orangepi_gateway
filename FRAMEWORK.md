@@ -79,12 +79,19 @@ orangepiZero2w/
 │   ├── log_service.c/h     # 日志服务
 │   ├── config_service.c/h  # 配置服务
 │   ├── device_service.c/h  # 设备状态服务
-│   └── web_service.c/h     # 🆕 Web 管理服务 (HTTP 服务器)
+│   ├── web_service.c/h     # 🆕 Web 管理服务 (HTTP 服务器)
+│   └── gate-orangepi.service  # 🆕 systemd 单元模板
 ├── hal/                    # 硬件抽象层
 │   ├── hal_oled.c/h        # OLED驱动
 │   ├── hal_oled_data.c/h   # OLED字模数据
 │   ├── oled_display.c/h    # OLED显示界面
 │   └── hal_led.c/h         # LED驱动
+├── scripts/                # 🆕 部署脚本
+│   └── install-service.sh  # 🆕 systemd 服务一键安装脚本
+├── docs/                   # 🆕 文档
+│   └── SERVICE.md          # 🆕 部署与运维文档
+├── Makefile                # 交叉编译 + 部署
+├── FRAMEWORK.md            # 框架文档
 └── gate_orangepi.conf      # 配置文件
 ```
 
@@ -491,7 +498,112 @@ gcc -o gate_orangepi \
 
 启动后可访问 Web 管理界面: `http://<OrangePi_IP>:8080`
 
-### 7.3 配置文件
+### 7.3 systemd 服务部署 (生产环境推荐) 🆕
+
+生产环境推荐使用 systemd 管理服务,实现:
+- 开机自启
+- 异常自动重启(5 秒后)
+- 60 秒内最多重启 3 次(防崩溃循环)
+- 日志集成到 systemd-journal
+
+#### 7.3.1 一键部署 (Windows/Linux 编译主机)
+
+```bash
+# 编译 + 推送到 Orange Pi + 安装 service + 启用自启 + 启动
+make deploy-service
+```
+
+#### 7.3.2 手动部署 (在 Orange Pi 上)
+
+```bash
+# 1. 部署二进制
+scp Gate_orangepi orangepi@192.168.1.125:/home/orangepi/fyz_test/
+
+# 2. 安装 service 单元
+sudo cp service/gate-orangepi.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 3. 启用并启动
+sudo systemctl enable gate-orangepi.service
+sudo systemctl start gate-orangepi.service
+
+# 4. 验证
+sudo systemctl status gate-orangepi.service
+```
+
+#### 7.3.3 进程模型
+
+```
+systemd (PID 1)
+    └─ Gate_orangepi (主进程,services 跟踪的 PID)
+         ├─ 网络线程    (TCP:8888)
+         ├─ 业务线程    (消息队列消费)
+         ├─ 日志线程
+         └─ Web 线程    (HTTP:8080)
+```
+
+**关键**: main.c 启动时检测 `PPID==1` 或 `INVOCATION_ID` 环境变量,
+识别为 systemd 启动后**跳过 double-fork**,否则 systemd 会误判进程已退出。
+
+#### 7.3.4 常用命令
+
+```bash
+# 查看状态
+sudo systemctl status gate-orangepi.service
+
+# 实时跟踪日志
+sudo journalctl -u gate-orangepi.service -f
+
+# 重启服务
+sudo systemctl restart gate-orangepi.service
+
+# 重新加载配置(不重启进程,本程序以重启方式实现)
+sudo systemctl kill -s SIGUSR1 gate-orangepi.service
+
+# 卸载服务
+sudo systemctl disable --now gate-orangepi.service
+sudo rm /etc/systemd/system/gate-orangepi.service
+sudo systemctl daemon-reload
+```
+
+**Makefile 快捷命令** (在 Windows 编译主机):
+```bash
+make service-status     # 查看服务状态
+make service-logs       # 最近 50 行日志
+make service-logs-f     # 实时跟踪
+make service-restart    # 重启
+make service-uninstall  # 卸载
+```
+
+#### 7.3.5 权限配置 (GPIO / I2C)
+
+`User=orangepi` 默认没有硬件外设访问权限,需要加入相应组:
+
+```bash
+sudo usermod -aG gpio,i2c,dialout orangepi
+sudo systemctl restart gate-orangepi.service
+```
+
+#### 7.3.6 故障排查
+
+```bash
+# 1. 查看完整日志
+sudo journalctl -u gate-orangepi.service -n 100 --no-pager
+
+# 2. 检查工作目录切换是否成功
+sudo journalctl -u gate-orangepi.service | grep "工作目录"
+
+# 3. 检查端口监听
+sudo ss -tlnp | grep -E ':8888|:8080'
+
+# 4. 手动前台运行,看真实错误
+sudo systemctl stop gate-orangepi.service
+cd /home/orangepi/fyz_test && ./Gate_orangepi
+```
+
+详细文档见 [docs/SERVICE.md](docs/SERVICE.md)。
+
+### 7.4 配置文件
 
 ```ini
 # gate_orangepi.conf

@@ -37,6 +37,18 @@
 
 static volatile int g_web_running = 0;
 
+/* 获取本机第一个非环回 IPv4 地址 */
+static void get_local_ip(char *buf, int len)
+{
+    FILE *fp = popen("/sbin/ifconfig | grep -Eo 'inet (addr:)?([0-9]*\\.){3}[0-9]*' | grep -Eo '([0-9]*\\.){3}[0-9]*' | grep -v '127.0.0.1' | head -n 1", "r");
+    if (fp && fgets(buf, len, fp) != NULL) {
+        buf[strcspn(buf, "\n")] = '\0';
+    } else {
+        snprintf(buf, len, "127.0.0.1");
+    }
+    if (fp) pclose(fp);
+}
+
 /* ============================================================
  * 内嵌 HTML 页面 (C 字符串字面量,直接编入二进制)
  * ============================================================ */
@@ -58,24 +70,32 @@ static const char WEB_INDEX_HTML[] =
 "box-shadow:0 4px 12px rgba(0,0,0,.15)}"
 ".card h2{font-size:18px;color:#1e3c72;margin-bottom:14px;"
 "border-bottom:2px solid #eef;padding-bottom:8px}"
-".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}"
+".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}"
 ".stat{background:#f8f9ff;padding:14px;border-radius:8px;text-align:center}"
 ".stat .label{font-size:12px;color:#888;margin-bottom:4px}"
-".stat .value{font-size:22px;font-weight:600;color:#1e3c72}"
+".stat .value{font-size:20px;font-weight:600;color:#1e3c72}"
 ".btn{display:inline-block;padding:10px 20px;border:none;border-radius:6px;"
 "cursor:pointer;font-size:14px;font-weight:500;transition:all .2s}"
 ".btn-primary{background:#1e3c72;color:#fff}"
 ".btn-primary:hover{background:#2a5298}"
 ".btn-success{background:#28a745;color:#fff}"
 ".btn-danger{background:#dc3545;color:#fff}"
+".btn-warning{background:#fd7e14;color:#fff}"
 ".btn:disabled{opacity:.5;cursor:not-allowed}"
-".led-indicator{display:inline-block;width:14px;height:14px;border-radius:50%;"
-"margin-right:8px;vertical-align:middle;box-shadow:0 0 8px currentColor}"
-".led-on{background:#28a745;color:#28a745}"
-".led-off{background:#6c757d;color:#6c757d}"
+".led-indicator{display:inline-block;width:12px;height:12px;border-radius:50%;"
+"margin-right:6px;vertical-align:middle}"
+".led-on{background:#28a745}"
+".led-off{background:#6c757d}"
+".trigger-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}"
+".trigger-none{background:#e9ecef;color:#6c757d}"
+".trigger-heartbeat{background:#ffe6e6;color:#dc3545}"
+".trigger-timer{background:#e6f3ff;color:#0d6efd}"
 "input,select{padding:8px 12px;border:1px solid #ddd;border-radius:6px;"
 "font-size:14px;width:100%;margin-top:4px}"
-"label{display:block;margin:10px 0;font-size:13px;color:#666}"
+"label{display:block;margin:8px 0 4px;font-size:13px;color:#666}"
+".inline-row{display:flex;gap:8px;align-items:center}"
+".inline-row select{flex:1;width:auto}"
+".inline-row input{width:100px;margin-top:0}"
 ".console{background:#1e1e1e;color:#0f0;padding:14px;border-radius:6px;"
 "font-family:'Courier New',monospace;font-size:13px;min-height:120px;"
 "max-height:240px;overflow-y:auto;margin-top:10px}"
@@ -84,17 +104,17 @@ static const char WEB_INDEX_HTML[] =
 "transform:translateX(400px);transition:transform .3s;z-index:1000}"
 ".toast.show{transform:translateX(0)}"
 ".toast.error{background:#dc3545}"
-".row{display:flex;gap:8px;align-items:center;margin-top:8px}"
-".row input{flex:1}"
 "</style></head><body>"
 "<div class=container>"
 "<h1>🍊 Gate_orangepi 网关管理</h1>"
 
 "<div class=card><h2>📊 系统状态</h2>"
-"<div class=grid id=statusGrid>"
+"<div class=grid>"
 "<div class=stat><div class=label>LED 状态</div>"
 "<div class=value><span id=ledDot class=\"led-indicator led-off\"></span>"
 "<span id=ledText>--</span></div></div>"
+"<div class=stat><div class=label>触发模式</div>"
+"<div class=value><span id=triggerBadge class=\"trigger-badge trigger-none\">--</span></div></div>"
 "<div class=stat><div class=label>客户端数</div>"
 "<div class=value id=clientCount>--</div></div>"
 "<div class=stat><div class=label>温度</div>"
@@ -104,9 +124,20 @@ static const char WEB_INDEX_HTML[] =
 "</div></div>"
 
 "<div class=card><h2>💡 LED 控制</h2>"
-"<button class=\"btn btn-success\" id=btnLedOn onclick=setLed(1)>开启 LED</button> "
-"<button class=\"btn btn-danger\" id=btnLedOff onclick=setLed(0)>关闭 LED</button> "
-"<button class=\"btn btn-primary\" id=btnLedToggle onclick=toggleLed()>切换</button>"
+"<div style=\"display:flex;gap:8px;margin-bottom:12px\">"
+"<button class=\"btn btn-success\" id=btnLedOn onclick=setLed(1)>● 开启</button>"
+"<button class=\"btn btn-danger\" id=btnLedOff onclick=setLed(0)>○ 关闭</button>"
+"<button class=\"btn btn-primary\" id=btnLedToggle onclick=toggleLed()>⇄ 切换</button>"
+"</div>"
+"<label>触发模式（选择后点击\"应用\"生效）</label>"
+"<div class=inline-row>"
+"<select id=selTrigger>"
+"<option value=\"LED TRIGGER NONE\">● 手动模式 (none)</option>"
+"<option value=\"LED TRIGGER HEARTBEAT\">♥ 心跳模式 (heartbeat)</option>"
+"<option value=\"LED TRIGGER TIMER\">⏱ 定时器模式 (timer)</option>"
+"</select>"
+"<button class=\"btn btn-warning\" onclick=setTrigger() style=padding:8px 16px>应用</button>"
+"</div>"
 "</div>"
 
 "<div class=card><h2>⚙️ 配置管理</h2>"
@@ -118,14 +149,40 @@ static const char WEB_INDEX_HTML[] =
 "<input id=cfgLogFile type=text></label>"
 "<label>Web 端口 (web_port)"
 "<input id=cfgWebPort type=number></label>"
-"<div class=row><button class=\"btn btn-primary\" onclick=saveConfig()>保存配置</button>"
-"<button class=\"btn btn-primary\" onclick=loadConfig() style=margin-left:8px>重新加载</button></div>"
+"<div style=\"display:flex;gap:8px;margin-top:8px\">"
+"<button class=\"btn btn-primary\" onclick=saveConfig()>保存配置</button>"
+"<button class=\"btn btn-primary\" onclick=loadConfig()>重新加载</button>"
+"</div>"
 "</div>"
 
 "<div class=card><h2>🖥️ 命令控制台</h2>"
-"<div class=row>"
-"<input id=cmdInput placeholder=\"输入命令,如 LED ON / GET STATUS / GET TEMP\""
-"onkeypress=\"if(event.keyCode==13)sendCmd()\">"
+"<label>快速命令</label>"
+"<select id=selCmd onchange=\"var i=$('cmdInput');i.value=this.value;this.value=''\">"
+"<option value=\"\">-- 选择命令 --</option>"
+"<optgroup label=\"LED 控制\">"
+"<option value=\"LED ON\">LED ON - 点亮 LED</option>"
+"<option value=\"LED OFF\">LED OFF - 熄灭 LED</option>"
+"<option value=\"LED TOGGLE\">LED TOGGLE - 切换 LED</option>"
+"<option value=\"LED TRIGGER NONE\">LED TRIGGER NONE - 手动模式</option>"
+"<option value=\"LED TRIGGER HEARTBEAT\">LED TRIGGER HEARTBEAT - 心跳模式</option>"
+"<option value=\"LED TRIGGER TIMER 500\">LED TRIGGER TIMER 500 - 定时 500ms</option>"
+"</optgroup>"
+"<optgroup label=\"状态查询\">"
+"<option value=\"GET STATUS\">GET STATUS - 系统状态</option>"
+"<option value=\"GET TEMP\">GET TEMP - 获取温度</option>"
+"<option value=\"GET CLIENT\">GET CLIENT - 客户端数量</option>"
+"<option value=\"KEY STATS\">KEY STATS - 按键统计</option>"
+"</optgroup>"
+"<optgroup label=\"系统\">"
+"<option value=\"OLED HELP\">OLED HELP - 显示帮助</option>"
+"<option value=\"OLED MAIN\">OLED MAIN - 返回主界面</option>"
+"<option value=\"RELOAD CONFIG\">RELOAD CONFIG - 重载配置</option>"
+"</optgroup>"
+"</select>"
+"<label>自定义命令</label>"
+"<div style=\"display:flex;gap:8px\">"
+"<input id=cmdInput placeholder=\"输入或选择命令，按回车发送\""
+"style=\"flex:1\" onkeypress=\"if(event.keyCode==13)sendCmd()\">"
 "<button class=\"btn btn-primary\" onclick=sendCmd()>发送</button>"
 "</div>"
 "<div class=console id=console></div>"
@@ -138,21 +195,34 @@ static const char WEB_INDEX_HTML[] =
 "function $(id){return document.getElementById(id)}"
 "function showToast(msg,isError){var t=$('toast');t.textContent=msg;"
 "t.className='toast show'+(isError?' error':'');"
-"setTimeout(function(){t.className='toast'+(isError?' error':'')},2000)}"
+"setTimeout(function(){t.className='toast'+(isError?' error':'')},2500)}"
 "function refreshStatus(){"
 "fetch('/api/status').then(r=>r.json()).then(d=>{"
 "$('ledDot').className='led-indicator '+(d.led?'led-on':'led-off');"
 "$('ledText').textContent=d.led?'ON':'OFF';"
 "$('clientCount').textContent=d.clients;"
 "$('temp').textContent=(d.temp/10).toFixed(1)+'°C';"
+"var b=$('triggerBadge');"
+"if(d.trigger==='heartbeat'){b.className='trigger-badge trigger-heartbeat';b.textContent='♥ heartbeat';"
+"}else if(d.trigger==='timer'){b.className='trigger-badge trigger-timer';b.textContent='⏱ timer';"
+"}else{b.className='trigger-badge trigger-none';b.textContent='● none';}"
+"$('selTrigger').value=d.trigger==='heartbeat'?'LED TRIGGER HEARTBEAT':"
+"d.trigger==='timer'?'LED TRIGGER TIMER':'LED TRIGGER NONE';"
+"var isManual=d.trigger==='none';"
+"$('btnLedOn').disabled=!isManual;"
+"$('btnLedOff').disabled=!isManual;"
+"$('btnLedToggle').disabled=!isManual;"
 "}).catch(e=>console.error(e))}"
 "function setLed(on){"
 "fetch('/api/led',{method:'POST',headers:{'Content-Type':'application/json'},"
 "body:JSON.stringify({on:on})}).then(r=>r.json()).then(d=>{"
-"showToast(d.message);refreshStatus()}).catch(e=>showToast('失败',1))}"
+"showToast(d.message);refreshStatus()}).catch(e=>showToast('操作失败',1))}"
 "function toggleLed(){"
 "fetch('/api/led/toggle',{method:'POST'}).then(r=>r.json()).then(d=>{"
-"showToast(d.message);refreshStatus()})}"
+"showToast(d.message);refreshStatus()}).catch(e=>showToast('操作失败',1))}"
+"function setTrigger(){"
+"var cmd=$('selTrigger').value;"
+"$('cmdInput').value=cmd;sendCmd();}"
 "function loadConfig(){"
 "fetch('/api/config').then(r=>r.json()).then(d=>{"
 "$('cfgServerPort').value=d.server_port||8888;"
@@ -169,10 +239,13 @@ static const char WEB_INDEX_HTML[] =
 "showToast(x.message)})}"
 "function sendCmd(){"
 "var i=$('cmdInput'),c=$('console'),cmd=i.value.trim();if(!cmd)return;"
-"c.innerHTML+='> '+cmd+'<br>';i.value='';"
+"c.innerHTML+='<span style=color:#0ff>> </span><span style=color:#ff0>'+cmd+'</span><br>';"
+"i.value='';"
 "fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},"
 "body:JSON.stringify({cmd:cmd})}).then(r=>r.json()).then(d=>{"
-"c.innerHTML+=d.response+'<br>';c.scrollTop=c.scrollHeight;refreshStatus()})}"
+"c.innerHTML+='<span style=color:#0f0>'+d.response.trim()+'</span><br>';"
+"c.scrollTop=c.scrollHeight;refreshStatus()})"
+".catch(e=>{showToast('发送失败',1);c.innerHTML+='<span style=color:#f00>ERROR</span><br>'})}"
 "function updateTime(){var d=new Date();$('time').textContent="
 "d.toTimeString().substring(0,8)}"
 "refreshStatus();updateTime();"
@@ -211,7 +284,7 @@ static int send_response(int fd, int status, const char *status_text,
 /**
  * @brief URL 解码 (将 %XX 转为字符, + 转为空格)
  */
-static void url_decode(char *dst, const char *src, int dst_size)
+static __attribute__((unused)) void url_decode(char *dst, const char *src, int dst_size)
 {
     int i = 0, j = 0;
     while (src[i] && j < dst_size - 1) {
@@ -276,10 +349,17 @@ static void api_status(int fd)
     device_status_get_all(&s);
     int clients = client_count();
 
+    const char *trigger_str;
+    switch (s.led_trigger) {
+        case LED_TRIGGER_HEARTBEAT: trigger_str = "heartbeat"; break;
+        case LED_TRIGGER_TIMER:     trigger_str = "timer";     break;
+        default:                    trigger_str = "none";       break;
+    }
+
     char body[256];
     int n = snprintf(body, sizeof(body),
-        "{\"led\":%d,\"clients\":%d,\"temp\":%d}",
-        s.led_status, clients, s.temperature);
+        "{\"led\":%d,\"clients\":%d,\"temp\":%d,\"trigger\":\"%s\"}",
+        s.led_status, clients, s.temperature, trigger_str);
     send_response(fd, 200, "OK", "application/json", body, n);
 }
 
@@ -292,13 +372,20 @@ static void api_led_set(int fd, const char *body)
         return;
     }
 
-    if (on) {
-        hal_led_on(0);
-        device_status_set_led(1);
-    } else {
-        hal_led_off(0);
-        device_status_set_led(0);
+    /* 心跳/定时模式下不允许手动控制 */
+    device_status_t s;
+    device_status_get_all(&s);
+    if (s.led_trigger != LED_TRIGGER_NONE) {
+        const char *mode = s.led_trigger == LED_TRIGGER_HEARTBEAT ? "heartbeat" : "timer";
+        char msg[128];
+        snprintf(msg, sizeof(msg), "当前为 %s 模式，不允许手动控制", mode);
+        char resp[256];
+        snprintf(resp, sizeof(resp), "{\"success\":false,\"message\":\"%s\"}", msg);
+        send_response(fd, 200, "OK", "application/json", resp, strlen(resp));
+        return;
     }
+
+    device_status_set_led(on ? 1 : 0);
 
     const char *resp = on
         ? "{\"success\":true,\"message\":\"LED 已开启\"}"
@@ -309,20 +396,26 @@ static void api_led_set(int fd, const char *body)
 
 static void api_led_toggle(int fd)
 {
-    int cur = device_status_get_led();
-    int next = !cur;
-    if (next) {
-        hal_led_on(0);
-    } else {
-        hal_led_off(0);
+    /* 心跳/定时模式下不允许切换 */
+    device_status_t s;
+    device_status_get_all(&s);
+    if (s.led_trigger != LED_TRIGGER_NONE) {
+        const char *mode = s.led_trigger == LED_TRIGGER_HEARTBEAT ? "heartbeat" : "timer";
+        char resp[256];
+        snprintf(resp, sizeof(resp),
+            "{\"success\":false,\"message\":\"当前为 %s 模式，不允许切换 LED\"}", mode);
+        send_response(fd, 200, "OK", "application/json", resp, strlen(resp));
+        return;
     }
-    device_status_set_led(next);
+
+    hal_led_toggle(0);
+    device_status_set_led(hal_led_get_brightness());
 
     char body[128];
-    int n = snprintf(body, sizeof(body),
-        "{\"success\":true,\"led\":%d,\"message\":\"LED 已切换\"}", next);
-    send_response(fd, 200, "OK", "application/json", body, n);
-    log_info("Web API: 切换 LED -> %s", next ? "ON" : "OFF");
+    snprintf(body, sizeof(body),
+        "{\"success\":true,\"message\":\"LED 已切换\"}");
+    send_response(fd, 200, "OK", "application/json", body, strlen(body));
+    log_info("Web API: 切换 LED");
 }
 
 static void api_config_get(int fd)
@@ -373,10 +466,15 @@ static void api_command(int fd, const char *body)
         return;
     }
 
-    /* 复用现有业务解析与处理 */
-    cmd_t cmd = parse_cmd(cmd_str);
+    /* 支持带参数命令，如 LED TRIGGER TIMER 500 */
     char response[256] = {0};
-    event_process(cmd, response, sizeof(response));
+    event_process_raw(cmd_str, response, sizeof(response));
+
+    /* 去掉响应里的 \r\n，避免破坏 JSON */
+    int resp_len = strlen(response);
+    while (resp_len > 0 && (response[resp_len-1] == '\r' || response[resp_len-1] == '\n')) {
+        response[--resp_len] = '\0';
+    }
 
     char out[512];
     int n = snprintf(out, sizeof(out),
@@ -573,7 +671,9 @@ int web_service_start(int port)
     ev.data.fd = listen_fd;
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev);
 
-    log_info("Web 服务已启动: http://0.0.0.0:%d", port);
+    char ip[64] = "127.0.0.1";
+    get_local_ip(ip, sizeof(ip));
+    log_info("Web 服务已启动: http://%s:%d", ip, port);
 
     while (g_web_running) {
         int nfds = epoll_wait(epoll_fd, events, 64, 500);

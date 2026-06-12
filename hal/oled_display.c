@@ -191,9 +191,8 @@ void oled_display_help(void)
 
     hal_oled_update();
 
-    // 翻页
+    // 翻页（下次调用自动切换）
     page = (page + 1) % 2;
-    sleep(3);
 }
 
 /**

@@ -2,7 +2,7 @@
  * @file main.c
  * @brief Gate_orangepi 主程序
  * @author PiCtrl Team
- * @date 2026-06-09
+ * @date 2026-06-12
  *
  * @note 编译时间: __DATE__ __TIME__
  */
@@ -33,11 +33,24 @@
 #include "hal_oled.h"
 #include "oled_display.h"
 #include "web_service.h"
+#include "key_service.h"
+
 /* ============================================================
  * 编译时间定义
  * ============================================================ */
 #define COMPILE_TIME __DATE__ " " __TIME__
 #define COMPILE_TIMESTAMP __DATE__ " " __TIME__
+
+/* ============================================================
+ * 终端颜色定义
+ * ============================================================ */
+#define C_RED     "\033[31m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_CYAN    "\033[36m"
+#define C_BLUE    "\033[34m"
+#define C_BOLD    "\033[1m"
+#define C_RESET   "\033[0m"
 
 /* ============================================================
  * 全局变量
@@ -48,6 +61,7 @@ static pthread_t g_network_thread;          /**< 网络线程 */
 static pthread_t g_business_thread;         /**< 业务线程 */
 static pthread_t g_log_thread;              /**< 日志线程 */
 static pthread_t g_web_thread;              /**< Web 服务线程 */
+static pthread_t g_key_thread;             /**< 按键服务线程 */
 
 /* ============================================================
  * 守护进程相关
@@ -55,22 +69,12 @@ static pthread_t g_web_thread;              /**< Web 服务线程 */
 
 /**
  * @brief 初始化守护进程
- * @return 0: 成功, -1: 失败
- *
- * @note 标准守护进程初始化流程：
- *       1. fork 子进程，父进程退出
- *       2. 创建新会话 (setsid)
- *       3. 再次 fork 防止获取终端
- *       4. 设置文件权限掩码 (umask)
- *       5. 切换到根目录 (chdir)
- *       6. 关闭标准输入输出
  */
 static int daemon_init(void)
 {
     pid_t pid;
     int i;
 
-    // 1. fork 子进程
     pid = fork();
     if (pid < 0) {
         perror("fork");
@@ -78,17 +82,14 @@ static int daemon_init(void)
     }
 
     if (pid > 0) {
-        // 父进程退出
         exit(0);
     }
 
-    // 2. 创建新会话
     if (setsid() < 0) {
         perror("setsid");
         return -1;
     }
 
-    // 3. 再次 fork 防止获取终端
     pid = fork();
     if (pid < 0) {
         perror("fork");
@@ -99,16 +100,13 @@ static int daemon_init(void)
         exit(0);
     }
 
-    // 4. 设置文件权限掩码
     umask(0);
 
-    // 5. 切换到根目录
     if (chdir("/") < 0) {
         perror("chdir");
         return -1;
     }
 
-    // 6. 关闭标准输入输出
     for (i = 0; i < 3; i++) {
         close(i);
         open("/dev/null", O_RDWR);
@@ -121,34 +119,21 @@ static int daemon_init(void)
  * 信号处理
  * ============================================================ */
 
-/**
- * @brief 信号处理函数
- * @param sig 信号编号
- *
- * @note 支持的信号：
- *       SIGINT/SIGTERM - 优雅退出
- *       SIGUSR1 - 重新加载配置
- *       SIGUSR2 - 切换日志等级
- */
 static void signal_handler(int sig)
 {
     switch (sig) {
         case SIGINT:
         case SIGTERM:
-            // 优雅退出 - 只设置标志，不在信号处理函数中写日志（避免可能的递归调用）
             g_running = 0;
             break;
 
         case SIGUSR1:
-            // 重新加载配置
             log_info("收到 SIGUSR1，重新加载配置");
-            config_load("/etc/gate_orangepi.conf");
+            config_load("./gate_orangepi.conf");
             break;
 
         case SIGUSR2:
-            // 切换日志等级
             log_info("收到 SIGUSR2，切换日志等级");
-            // 这里可以添加日志等级切换逻辑
             break;
 
         default:
@@ -156,9 +141,6 @@ static void signal_handler(int sig)
     }
 }
 
-/**
- * @brief 注册信号处理
- */
 static void signal_setup(void)
 {
     struct sigaction sa;
@@ -173,7 +155,6 @@ static void signal_setup(void)
     sigaction(SIGUSR1, &sa, NULL);
     sigaction(SIGUSR2, &sa, NULL);
 
-    // 忽略 SIGPIPE，防止 socket 写错误导致进程退出
     signal(SIGPIPE, SIG_IGN);
 }
 
@@ -181,28 +162,18 @@ static void signal_setup(void)
  * 线程函数
  * ============================================================ */
 
-/**
- * @brief 网络线程
- * @param arg 参数
- * @return NULL
- *
- * @note 负责 TCP 服务器运行，接收客户端连接和数据
- *       使用 epoll 实现高并发
- */
 static void* network_thread_func(void *arg)
 {
+    (void)arg;
     log_info("网络线程启动");
 
-    // 读取配置的端口
     int server_port = atoi(config_get("server_port", "8888"));
 
-    // 启动 TCP 服务器（使用配置文件中的端口）
     if (tcp_server_start(server_port) < 0) {
         log_error("TCP 服务器启动失败");
         return NULL;
     }
 
-    // 等待服务器结束
     while (g_running && tcp_server_is_running()) {
         sleep(1);
     }
@@ -211,37 +182,23 @@ static void* network_thread_func(void *arg)
     return NULL;
 }
 
-/**
- * @brief 业务线程
- * @param arg 参数
- * @return NULL
- *
- * @note 负责从消息队列获取消息，解析命令，执行事件处理
- *       实现业务逻辑与网络层的解耦
- */
 static void* business_thread_func(void *arg)
 {
+    (void)arg;
     message_t msg;
     char response[256];
-    cmd_t cmd;
 
     log_info("业务线程启动");
 
     while (g_running) {
-        // 从消息队列获取消息
         if (mq_pop(&msg) < 0) {
-            // 队列为空，等待
-            usleep(10000); // 10ms
+            usleep(10000);
             continue;
         }
 
-        // 解析命令
-        cmd = parse_cmd(msg.data);
+        /* 支持带参数命令，如 LED TRIGGER TIMER 500 */
+        event_process_raw(msg.data, response, sizeof(response));
 
-        // 处理事件
-        event_process(cmd, response, sizeof(response));
-
-        // 发送响应给客户端
         if (msg.client_fd >= 0) {
             write(msg.client_fd, response, strlen(response));
         }
@@ -251,21 +208,12 @@ static void* business_thread_func(void *arg)
     return NULL;
 }
 
-/**
- * @brief 日志线程
- * @param arg 参数
- * @return NULL
- *
- * @note 负责异步日志写入
- *       目前日志是同步写入，此线程作为缓冲刷新线程
- */
 static void* log_thread_func(void *arg)
 {
+    (void)arg;
     log_info("日志线程启动");
 
     while (g_running) {
-        // 这里可以实现异步日志写入
-        // 目前日志是同步写入的，这个线程作为日志缓冲刷新线程
         sleep(5);
     }
 
@@ -273,23 +221,13 @@ static void* log_thread_func(void *arg)
     return NULL;
 }
 
-/**
- * @brief Web 服务线程
- * @param arg 参数
- * @return NULL
- *
- * @note 负责嵌入式 HTTP 服务器
- *       监听独立端口(默认 8080),提供 Web 管理界面与 REST API
- *       与 TCP 业务端口(默认 8888)并存,互不干扰
- */
 static void* web_thread_func(void *arg)
 {
+    (void)arg;
     log_info("Web 服务线程启动");
 
-    // 读取配置的 Web 端口
     int web_port = atoi(config_get("web_port", "8080"));
 
-    // 启动 HTTP 服务器
     if (web_service_start(web_port) < 0) {
         log_error("Web 服务启动失败");
         return NULL;
@@ -299,13 +237,30 @@ static void* web_thread_func(void *arg)
     return NULL;
 }
 
+/**
+ * @brief 按键服务线程
+ */
+static void* key_thread_func(void *arg)
+{
+    (void)arg;
+    log_info("按键服务线程启动");
+
+    /* key_service_init() 已经在 system_init() 中调用
+     * 这里只需要等待服务运行即可
+     */
+
+    while (g_running && key_service_is_running()) {
+        sleep(1);
+    }
+
+    log_info("按键服务线程退出");
+    return NULL;
+}
+
 /* ============================================================
  * 系统状态打印
  * ============================================================ */
 
-/**
- * @brief 打印系统状态
- */
 static void print_system_status(void)
 {
     device_status_t status;
@@ -313,18 +268,29 @@ static void print_system_status(void)
     time_t now;
     char time_str[64];
 
-    // 获取当前时间
     now = time(NULL);
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
-    // 获取设备状态
     device_status_get_all(&status);
     clientcount = client_count();
 
-    // 打印状态
-    log_info("系统状态: [%s] LED=%s, 客户端=%d, 温度=%.1f°C",
+    const char *trigger_str;
+    switch (status.led_trigger) {
+        case LED_TRIGGER_HEARTBEAT:
+            trigger_str = "heartbeat";
+            break;
+        case LED_TRIGGER_TIMER:
+            trigger_str = "timer";
+            break;
+        default:
+            trigger_str = "none";
+            break;
+    }
+
+    log_info("系统状态: [%s] LED=%s(%s), 客户端=%d, 温度=%.1f°C",
              time_str,
              status.led_status ? "ON" : "OFF",
+             trigger_str,
              clientcount,
              status.temperature / 10.0);
 }
@@ -333,98 +299,104 @@ static void print_system_status(void)
  * 初始化与清理
  * ============================================================ */
 
-/**
- * @brief 初始化系统
- * @return 0: 成功, -1: 失败
- *
- * @note 初始化顺序：
- *       1. HAL LED
- *       2. 日志系统（记录编译时间）
- *       3. 配置加载
- *       4. 设备状态
- *       5. 消息队列
- *       6. 客户端管理
- *       7. OLED显示
- */
 static int system_init(void)
 {
-    // 1. 初始化 HAL LED
+    printf(C_BOLD "\n╔══════════════════════════════════════════════╗\n" C_RESET);
+    printf(C_BOLD "║       Gate_orangepi 系统初始化              ║\n" C_RESET);
+    printf(C_BOLD "╚══════════════════════════════════════════════╝\n" C_RESET);
+
+    /* 1. 初始化 HAL LED */
     if (hal_led_init(0) < 0) {
-        fprintf(stderr, "HAL LED 初始化失败\n");
+        fprintf(stderr, C_RED "[错误] HAL LED 初始化失败\n" C_RESET);
         return -1;
     }
-    log_info("HAL LED 初始化完成");
+    printf(C_GREEN "✓ HAL LED 初始化完成\n" C_RESET);
 
-    // 2. 初始化日志
+    /* 2. 初始化日志 */
     const char *log_file = config_get("log_file", "./gate_orangepi.log");
     log_init(log_file);
+    log_info("==========================================");
     log_info("Gate_orangepi 服务启动");
     log_info("编译时间: %s", COMPILE_TIME);
+    log_info("==========================================");
 
-    // 3. 加载配置（使用当前目录）
+    /* 3. 加载配置 */
     config_load("./gate_orangepi.conf");
     log_info("配置加载完成");
 
-    // 4. 初始化设备状态
+    /* 4. 初始化设备状态 */
     device_status_init();
     log_info("设备状态初始化完成");
 
-    // 5. 初始化消息队列
+    /* 5. 初始化消息队列 */
     if (mq_init() < 0) {
         log_error("消息队列初始化失败");
         return -1;
     }
-    log_info("消息队列初始化完成");
+    printf(C_GREEN "✓ 消息队列初始化完成\n" C_RESET);
 
-    // 6. 初始化客户端管理器
+    /* 6. 初始化客户端管理器 */
     if (client_manager_init() < 0) {
         log_error("客户端管理器初始化失败");
         return -1;
     }
-    log_info("客户端管理器初始化完成");
+    printf(C_GREEN "✓ 客户端管理器初始化完成\n" C_RESET);
 
-    // 7. 初始化OLED显示模块 (使用I2C2总线)
+    /* 7. 初始化 OLED 显示模块 */
     if (oled_display_init(2, 0x3C) < 0) {
-        log_error("OLED初始化失败");
+        log_error("OLED 初始化失败");
         return -1;
     }
-    log_info("OLED初始化完成");
+    printf(C_GREEN "✓ OLED 初始化完成\n" C_RESET);
 
-    // 8. 异步显示开机欢迎界面
+    /* 8. 异步显示开机欢迎界面 */
     if (oled_display_welcome_async(OLED_DISPLAY_VERSION) < 0) {
-        log_warn("OLED欢迎界面异步显示启动失败");
+        log_warn("OLED 欢迎界面异步显示启动失败");
     }
-    log_info("OLED欢迎界面正在显示...");
+    printf(C_CYAN "  OLED 欢迎界面正在显示...\n" C_RESET);
 
-    // 9. 读取 Web 服务端口(配置中无值时使用默认 8080)
-    int web_port = atoi(config_get("web_port", "8080"));
-    log_info("Web 服务端口: %d", web_port);
+    /* 9. 初始化按键服务 */
+    if (key_service_init() < 0) {
+        log_warn("按键服务初始化失败（驱动可能未加载）");
+        printf(C_YELLOW "⚠ 按键服务初始化失败，请检查驱动\n" C_RESET);
+    } else {
+        printf(C_GREEN "✓ 按键服务初始化完成\n" C_RESET);
+    }
+
+    printf(C_BOLD "\n╔══════════════════════════════════════════════╗\n" C_RESET);
+    printf(C_BOLD "║       系统初始化完成                        ║\n" C_RESET);
+    printf(C_BOLD "╚══════════════════════════════════════════════╝\n\n" C_RESET);
 
     return 0;
 }
 
-/**
- * @brief 清理系统资源
- *
- * @note 清理顺序与初始化相反
- */
 static void system_cleanup(void)
 {
     log_info("开始清理系统资源...");
 
-    // 停止 TCP 服务器
+    /* 停止按键服务 */
+    if (key_service_is_running()) {
+        key_service_close();
+        log_info("按键服务已关闭");
+    }
+
+    /* 停止 Web 服务 */
+    web_service_stop();
+    log_info("Web 服务已停止");
+
+    /* 停止 TCP 服务器 */
     tcp_server_stop();
     log_info("TCP 服务器已停止");
 
-    // 销毁客户端管理器
+    /* 销毁客户端管理器 */
     client_manager_destroy();
     log_info("客户端管理器已销毁");
 
-    // 销毁消息队列
+    /* 销毁消息队列 */
     mq_destroy();
     log_info("消息队列已销毁");
 
-    // 关闭 LED
+    /* 关闭 LED */
     hal_led_off(0);
     log_info("LED 已关闭");
 
@@ -435,20 +407,11 @@ static void system_cleanup(void)
  * 主函数
  * ============================================================ */
 
-/**
- * @brief 主函数
- * @param argc 参数个数
- * @param argv 参数数组
- * @return 0: 成功, 1: 失败
- *
- * @note 程序入口，负责解析命令行参数、初始化系统、创建线程、主循环
- */
 int main(int argc, char *argv[])
 {
     int daemon_mode = 0;
     int opt;
 
-    // 解析命令行参数
     while ((opt = getopt(argc, argv, "d")) != -1) {
         switch (opt) {
             case 'd':
@@ -461,94 +424,130 @@ int main(int argc, char *argv[])
         }
     }
 
-    // 守护进程模式
     if (daemon_mode) {
-        if (daemon_init() < 0) {
-            fprintf(stderr, "守护进程初始化失败\n");
-            return 1;
+        int ppid = getppid();
+        const char *invocation_id = getenv("INVOCATION_ID");
+
+        if (ppid != 1 && invocation_id == NULL) {
+            if (daemon_init() < 0) {
+                fprintf(stderr, "守护进程初始化失败\n");
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "检测到服务管理器启动 (ppid=%d, invocation_id=%s),跳过 double-fork\n",
+                    ppid, invocation_id ? "yes" : "no");
         }
     }
 
-    // 设置信号处理
     signal_setup();
 
-    // 初始化系统
+    /* 切换到可执行文件所在目录 */
+    {
+        char exe_dir[512] = {0};
+        ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+        if (len > 0) {
+            char *slash = strrchr(exe_dir, '/');
+            if (slash != NULL) {
+                *slash = '\0';
+                if (chdir(exe_dir) == 0) {
+                    fprintf(stderr, "工作目录已切换到: %s\n", exe_dir);
+                }
+            }
+        }
+    }
+
+    /* 初始化系统 */
     if (system_init() < 0) {
         fprintf(stderr, "系统初始化失败\n");
         return 1;
     }
 
-    // 创建网络线程
+    /* 创建网络线程 */
     if (pthread_create(&g_network_thread, NULL, network_thread_func, NULL) != 0) {
         log_error("网络线程创建失败");
         return 1;
     }
     log_info("网络线程已创建");
 
-    // 创建业务线程
+    /* 创建业务线程 */
     if (pthread_create(&g_business_thread, NULL, business_thread_func, NULL) != 0) {
         log_error("业务线程创建失败");
         return 1;
     }
     log_info("业务线程已创建");
 
-    // 创建日志线程
+    /* 创建日志线程 */
     if (pthread_create(&g_log_thread, NULL, log_thread_func, NULL) != 0) {
         log_error("日志线程创建失败");
         return 1;
     }
     log_info("日志线程已创建");
 
-    // 创建 Web 服务线程
+    /* 创建 Web 服务线程 */
     if (pthread_create(&g_web_thread, NULL, web_thread_func, NULL) != 0) {
         log_error("Web 服务线程创建失败");
         return 1;
     }
     log_info("Web 服务线程已创建");
 
-    // 读取配置参数
+    /* 创建按键服务线程（按键服务在 system_init 中已初始化） */
+    if (key_service_is_running()) {
+        if (pthread_create(&g_key_thread, NULL, key_thread_func, NULL) != 0) {
+            log_error("按键服务线程创建失败");
+        } else {
+            log_info("按键服务线程已创建");
+        }
+    } else {
+        /* 按键服务未运行，线程 ID 置 0 */
+        g_key_thread = 0;
+    }
+
+    /* 读取配置参数 */
     int server_port = atoi(config_get("server_port", "8888"));
     int web_port = atoi(config_get("web_port", "8080"));
     int status_interval = atoi(config_get("status_interval", "10"));
 
-    // 获取本机IP地址（遍历网络接口）
+    /* 获取本机 IP 地址 */
     char ip_address[256] = "127.0.0.1";
     FILE *fp = popen("/sbin/ifconfig | grep -Eo 'inet (addr:)?([0-9]*\\.){3}[0-9]*' | grep -Eo '([0-9]*\\.){3}[0-9]*' | grep -v '127.0.0.1' | head -n 1", "r");
     if (fp != NULL) {
         if (fgets(ip_address, sizeof(ip_address), fp) != NULL) {
-            // 去除换行符
             ip_address[strcspn(ip_address, "\n")] = '\0';
         }
         pclose(fp);
     }
 
-    log_info("Gate_orangepi 服务已启动");
-    log_info("TCP 服务器地址: %s:%d", ip_address, server_port);
-    log_info("Web 管理地址:   http://%s:%d", ip_address, web_port);
-    log_info("编译时间: %s", COMPILE_TIME);
+    printf(C_BOLD "\n╔══════════════════════════════════════════════╗\n" C_RESET);
+    printf(C_BOLD "║       Gate_orangepi 服务已启动               ║\n" C_RESET);
+    printf(C_BOLD "╠══════════════════════════════════════════════╣\n" C_RESET);
+    printf(C_BOLD "║  TCP 服务器:  " C_RESET "%s:%d\n", ip_address, server_port);
+    printf(C_BOLD "║  Web 管理界面:" C_RESET " http://%s:%d\n", ip_address, web_port);
+    printf(C_BOLD "║  编译时间:    " C_RESET "%s\n", COMPILE_TIME);
+    printf(C_BOLD "╚══════════════════════════════════════════════╝\n" C_RESET);
 
-    // 打印客户端使用说明
     log_info("========================================");
     log_info("TCP 客户端命令说明:");
-    log_info("  LED ON          - 打开LED灯");
-    log_info("  LED OFF         - 关闭LED灯");
-    log_info("  GET STATUS      - 获取系统状态");
-    log_info("  GET TEMP        - 获取温度");
-    log_info("  GET CLIENT      - 获取客户端数量");
-    log_info("  RELOAD CONFIG   - 重新加载配置");
-    log_info("Web 管理界面:    http://%s:%d", ip_address, web_port);
+    log_info("  LED ON              - 打开LED灯");
+    log_info("  LED OFF             - 关闭LED灯");
+    log_info("  LED TOGGLE          - 切换LED状态");
+    log_info("  LED TRIGGER NONE    - 手动模式");
+    log_info("  LED TRIGGER HEARTBEAT - 心跳模式");
+    log_info("  LED TRIGGER TIMER   - 定时器模式");
+    log_info("  GET STATUS          - 获取系统状态");
+    log_info("  GET TEMP            - 获取温度");
+    log_info("  GET CLIENT          - 获取客户端数量");
+    log_info("  KEY STATS           - 获取按键统计");
+    log_info("  RELOAD CONFIG       - 重新加载配置");
+    log_info("Web 管理界面: http://%s:%d", ip_address, web_port);
     log_info("========================================");
 
-    // 主循环
+    /* 主循环 */
     while (g_running) {
-        // 打印系统状态
         print_system_status();
 
-        // 获取设备状态用于OLED显示
         device_status_t status;
         device_status_get_all(&status);
 
-        // 更新OLED显示（欢迎界面显示期间跳过主界面更新）
         if (!oled_display_is_welcome_running()) {
             oled_display_main(ip_address, server_port,
                              status.client_count,
@@ -556,42 +555,29 @@ int main(int argc, char *argv[])
                              status.led_status);
         }
 
-        // 使用配置的间隔时间
         sleep(status_interval);
     }
 
     log_info("收到退出信号，开始关闭...");
 
-    // 停止消息队列（唤醒业务线程）
-    log_info("停止消息队列...");
     mq_stop();
-
-    // 停止 Web 服务
-    log_info("停止 Web 服务...");
     web_service_stop();
 
-    // 等待线程结束
     log_info("等待网络线程退出...");
     pthread_join(g_network_thread, NULL);
-    log_info("网络线程已退出");
 
     log_info("等待业务线程退出...");
     pthread_join(g_business_thread, NULL);
-    log_info("业务线程已退出");
 
     log_info("等待日志线程退出...");
     pthread_join(g_log_thread, NULL);
-    log_info("日志线程已退出");
 
     log_info("等待 Web 服务线程退出...");
     pthread_join(g_web_thread, NULL);
-    log_info("Web 服务线程已退出");
 
     log_info("所有线程已退出");
 
-    // 清理系统资源
     system_cleanup();
 
     return 0;
 }
-
