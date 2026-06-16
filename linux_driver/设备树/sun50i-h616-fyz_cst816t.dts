@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "allwinner,sun50i-h618";
+
+    fragment@0 {
+        target-path = "/soc/i2c@5002800";
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells    = <0>;
+            status         = "okay";
+
+            cst816t@15 {
+                compatible       = "hynitron,cst816t";
+                reg              = <0x15>;
+                interrupt-parent = <&pio>;
+                interrupts       = <8 15 2>;
+                reset-gpios      = <&pio 8 0 0>;
+            };
+        };
+    };
+};
