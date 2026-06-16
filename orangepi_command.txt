@@ -1,0 +1,127 @@
+ssh orangepi@192.168.1.125
+
+sudo orangepi-config
+
+scp -r /home/fyz/fyz_linux_project/hello_word/hello_arm64  orangepi@192.168.1.125:/home/orangepi/fyz_test
+
+scp -r /home/fyz/fyz_linux_project/orangepi_project/service/gate-orangepi.service  orangepi@192.168.1.125:/home/orangepi/fyz_test
+
+gcc my_orangepi_uart5_test.c -o mytest -lwiringPi -lpthread -lbluetooth
+scp -r /home/fyz/orangepi_test/*  orangepi@192.168.1.129:/home/orangepi/my_test/
+
+scp -r /home/fyz/aquaV25_auto_burn_project/*  orangepi@192.168.1.129:/home/orangepi/my_test/
+
+
+dtc -@ -I dts -O dtb -o sun50i-h616-pi-uart4.dtbo sun50i-h616-pi-uart4.dts
+
+//拷贝设备树文件
+sudo scp fyz@192.168.1.143:/home/fyz/orangepi_2w_linux/dtb_temp/sun50i-h616-pi-uart*.dtbo  /boot/dtb-6.1.31-sun50iw9/allwinner/overlay/
+
+
+//更改密码
+
+
+//sysroot
+echo $ORANGE_IP
+export ORANGE_IP="192.168.1.133"
+# 打开 Ubuntu 终端（Ctrl+Alt+T）
+
+# 第1步：设置IP变量
+export ORANGE_IP="192.168.1.143"
+
+# 第2步：创建sysroot目录
+mkdir -p ~/orangepi_rootfs/usr/include
+mkdir -p ~/orangepi_rootfs/usr/lib
+mkdir -p ~/orangepi_rootfs/lib
+
+# 第3步：同步 /usr/include（执行后会看到文件列表滚动）
+sudo rsync -avz --rsync-path="rsync" orangepi@${ORANGE_IP}:/usr/include/ ~/orangepi_rootfs/usr/include/
+
+# 第4步：同步 /usr/lib
+sudo rsync -avz --rsync-path="rsync" orangepi@${ORANGE_IP}:/usr/lib/ ~/orangepi_rootfs/usr/lib/
+
+
+
+# 在 Windows 的 PowerShell 或 CMD 中执行
+window->ubuntu
+scp -r H:\trae_project\orangepiZero2w\*  fyz@192.168.1.144:/home/fyz/fyz_linux_project/orangepi_project/
+ubuntu->window
+scp -r fyz@192.168.1.144:/home/fyz/fyz_linux_project/orangepi_project/*  H:\trae_project\orangepiZero2w\
+
+
+
+
+
+
+/* LED  */
+dtc -@ -I dts -O dtb -o sun50i-h616-orangepi2w_fyz_led.dtbo sun50i-h616-orangepi2w_fyz_led.dts
+//传输设备树到dtb目录  因为有权限的问题
+scp sun50i-h616-orangepi2w_fyz_led.dtbo orangepi@192.168.1.125:/home/orangepi/dtb/
+//覆盖层目录
+/boot/dtb/allwinner/overlay/  
+
+//移植到覆盖层
+sudo cp ~/dtb/sun50i-h616-orangepi2w_fyz_led.dtbo /boot/dtb/allwinner/overlay/
+ls -l /boot/dtb/allwinner/overlay/sun50i-h616-orangepi2w_fyz_led.dtbo
+
+// 编辑 boot 配置文件启用 overlay
+sudo nano /boot/orangepiEnv.txt
+
+在文件中找到或添加 overlays= 行：
+overlays=orangepi2w_fyz_led
+如果有多个 overlay，用空格分隔：
+overlays=orangepi2w_fyz_led sun50i-h616-zero2w-disable-led
+
+/* KEY */
+dtc -@ -I dts -O dtb -o sun50i-h616-fyz-lradc-key.dtbo sun50i-h616-fyz-lradc-key.dts
+scp sun50i-h616-fyz-lradc-key.dtbo orangepi@192.168.1.125:/home/orangepi/dtb/
+sudo cp ~/dtb/sun50i-h616-fyz-lradc-key.dtbo /boot/dtb/allwinner/overlay/
+ls -la  /boot/dtb/allwinner/overlay/sun50i-h616-fyz-lradc-key.dtbo
+// 编辑 boot 配置文件启用 overlay
+sudo nano /boot/orangepiEnv.txt
+在文件中找到或添加 overlays= 行：
+overlays=fyz-lradc-key
+
+sudo evtest /dev/input/event1
+# 查看所有 input 设备，找到 fyz-lradc-keys
+cat /proc/bus/input/devices | grep -A 8 "fyz"
+
+
+/*LCD */
+dtc -@ -I dts -O dtb -o sun50i-h616-fyz_st7789v.dtbo sun50i-h616-fyz_st7789v.dts
+scp sun50i-h616-fyz_st7789v.dtbo orangepi@192.168.1.125:/home/orangepi/dtb/
+sudo cp ~/dtb/sun50i-h616-fyz_st7789v.dtbo /boot/dtb/allwinner/overlay/
+ls -la  /boot/dtb/allwinner/overlay/sun50i-h616-fyz_st7789v.dtbo
+// 编辑 boot 配置文件启用 overlay
+sudo nano /boot/orangepiEnv.txt
+在文件中找到或添加 overlays= 行：
+overlays=fyz_st7789v
+
+# 验证设备树节点出现
+ls /proc/device-tree/soc/spi@*/st7789v@0/
+
+//触摸
+dtc -@ -I dts -O dtb -o sun50i-h616-fyz_cst816t.dtbo sun50i-h616-fyz_cst816t.dts
+scp sun50i-h616-fyz_cst816t.dtbo orangepi@192.168.1.125:/home/orangepi/dtb/
+sudo cp ~/dtb/sun50i-h616-fyz_cst816t.dtbo /boot/dtb/allwinner/overlay/
+
+
+
+
+
+#设备树学习
+dtc -@ -I dts -O dtb -o orangepi2w-led.dtbo orangepi2w-led.dts
+参数	全称	含义
+dtc	  	Device Tree Compiler	设备树编译器，用于将文本格式的设备树源文件转换为二进制格式
+-@	   	symbol support	启用符号支持，使得编译出的文件支持动态叠加（overlay）
+-I dts	Input format = dts	指定输入文件格式为设备树源文本格式（.dts）
+-O dtb	Output format = dtb	指定输出文件格式为设备树二进制格式（.dtb）
+-o orangepi2w-led.dtbo	output file	指定输出文件名为 orangepi2w-led.dtbo
+orangepi2w-led.dts	输入源文件	待编译的设备树源文件
+
+
+
+
+
+//最后20行日志
+dmesg | tail -20
